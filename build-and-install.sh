@@ -33,9 +33,9 @@ cp -R "$ROOT_DIR/assets" "$APP_ROOT/"
 cat > "$LAUNCHER_PATH" <<EOF
 #!/bin/sh
 set -eu
-APP_ROOT="\$(CDPATH= cd -- "\$(dirname -- "\$0")/../share/$APP_NAME" && pwd)"
-cd "\$APP_ROOT"
-exec "\$APP_ROOT/$APP_NAME" "\$@"
+APP_ROOT="$APP_ROOT"
+cd -- "$APP_ROOT"
+exec "$APP_ROOT/$APP_NAME" "\$@"
 EOF
 
 chmod 755 "$LAUNCHER_PATH"
