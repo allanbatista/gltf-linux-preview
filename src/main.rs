@@ -6,7 +6,6 @@ use bevy::{
         mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButton, MouseScrollUnit},
         ButtonInput,
     },
-    math::Affine3A,
     prelude::*,
     scene::SceneRoot,
     window::{PrimaryWindow, Window, WindowPlugin, WindowResolution},
@@ -15,6 +14,7 @@ use std::env;
 use std::path::PathBuf;
 
 const DEFAULT_MODEL_PATH: &str = "models/model.gltf";
+const MODEL_SPIN_SPEED: f32 = std::f32::consts::TAU / 18.0;
 
 #[derive(Resource, Clone)]
 struct ViewerConfig {
@@ -111,14 +111,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<Vie
     let scene_path = AssetPath::from_path_buf(config.model_path.clone());
     let scene = asset_server.load_override(GltfAssetLabel::Scene(0).from_asset(scene_path));
 
-    commands.spawn((
-        SceneRoot(scene),
-        Transform::default(),
-        ModelSpinner {
-            speed: std::f32::consts::TAU / 18.0,
-        },
-        PendingCentering,
-    ));
+    commands.spawn((Transform::default(),)).with_children(move |parent| {
+        parent.spawn((SceneRoot(scene), Transform::default(), PendingCentering));
+    });
 }
 
 fn spin_model(time: Res<Time>, mut query: Query<(&mut Transform, &ModelSpinner)>) {
@@ -166,7 +161,7 @@ fn center_pending_model(
     meshes: Res<Assets<Mesh>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut pending_camera_fit: ResMut<PendingCameraFit>,
-    mut query: Query<(Entity, &mut Transform), With<PendingCentering>>,
+    mut query: Query<(Entity, &mut Transform, &ChildOf), With<PendingCentering>>,
 ) {
     let mut corners = Vec::new();
     let aspect_ratio = windows
@@ -181,23 +176,20 @@ fn center_pending_model(
         })
         .unwrap_or(16.0 / 9.0);
 
-    for (entity, mut transform) in &mut query {
+    for (entity, mut transform, child_of) in &mut query {
         corners.clear();
 
-        accumulate_mesh_corners(
-            entity,
-            Affine3A::IDENTITY,
-            &children,
-            &transforms,
-            &mesh_query,
-            &meshes,
-            &mut corners,
-        );
+        accumulate_mesh_corners(entity, &children, &transforms, &mesh_query, &meshes, &mut corners);
 
         if let Some(aabb) = Aabb::enclosing(corners.iter().copied()) {
             transform.translation = -Vec3::from(aabb.center);
             pending_camera_fit.radius = Some(fit_camera_radius(&aabb, aspect_ratio));
 
+            commands
+                .entity(child_of.parent())
+                .insert(ModelSpinner {
+                    speed: MODEL_SPIN_SPEED,
+                });
             commands.entity(entity).remove::<PendingCentering>();
         }
     }
@@ -240,7 +232,6 @@ fn apply_orbit_transform(camera: &OrbitCamera, transform: &mut Transform) {
 
 fn accumulate_mesh_corners(
     entity: Entity,
-    affine_from_root: Affine3A,
     child_query: &Query<&Children>,
     transforms: &Query<&GlobalTransform>,
     mesh_query: &Query<&Mesh3d>,
@@ -250,18 +241,21 @@ fn accumulate_mesh_corners(
     if let Ok(mesh) = mesh_query.get(entity) {
         if let Some(mesh) = meshes.get(&mesh.0) {
             if let Some(aabb) = mesh.compute_aabb() {
-                let min: Vec3 = aabb.min().into();
-                let max: Vec3 = aabb.max().into();
-                corners.extend([
-                    affine_from_root.transform_point3(Vec3::new(min.x, min.y, min.z)),
-                    affine_from_root.transform_point3(Vec3::new(min.x, min.y, max.z)),
-                    affine_from_root.transform_point3(Vec3::new(min.x, max.y, min.z)),
-                    affine_from_root.transform_point3(Vec3::new(min.x, max.y, max.z)),
-                    affine_from_root.transform_point3(Vec3::new(max.x, min.y, min.z)),
-                    affine_from_root.transform_point3(Vec3::new(max.x, min.y, max.z)),
-                    affine_from_root.transform_point3(Vec3::new(max.x, max.y, min.z)),
-                    affine_from_root.transform_point3(Vec3::new(max.x, max.y, max.z)),
-                ]);
+                if let Ok(transform) = transforms.get(entity) {
+                    let min: Vec3 = aabb.min().into();
+                    let max: Vec3 = aabb.max().into();
+                    let affine = transform.affine();
+                    corners.extend([
+                        affine.transform_point3(Vec3::new(min.x, min.y, min.z)),
+                        affine.transform_point3(Vec3::new(min.x, min.y, max.z)),
+                        affine.transform_point3(Vec3::new(min.x, max.y, min.z)),
+                        affine.transform_point3(Vec3::new(min.x, max.y, max.z)),
+                        affine.transform_point3(Vec3::new(max.x, min.y, min.z)),
+                        affine.transform_point3(Vec3::new(max.x, min.y, max.z)),
+                        affine.transform_point3(Vec3::new(max.x, max.y, min.z)),
+                        affine.transform_point3(Vec3::new(max.x, max.y, max.z)),
+                    ]);
+                }
             }
         }
     }
@@ -271,13 +265,8 @@ fn accumulate_mesh_corners(
     };
 
     for child in entity_children.iter() {
-        let Ok(transform) = transforms.get(child) else {
-            continue;
-        };
-
         accumulate_mesh_corners(
             child,
-            affine_from_root * transform.affine(),
             child_query,
             transforms,
             mesh_query,

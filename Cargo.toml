@@ -1,6 +1,6 @@
 [package]
 name = "gltf-linux-preview"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A simple glTF and GLB previewer for Linux."
 license = "MIT"

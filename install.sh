@@ -117,7 +117,7 @@ cat > "$DESKTOP_FILE" <<EOF
 Type=Application
 Name=GLTF Preview
 Comment=Preview glTF and GLB files
-Exec=$LAUNCHER_PATH %F
+Exec="$LAUNCHER_PATH" %F
 TryExec=$LAUNCHER_PATH
 Icon=applications-graphics
 Terminal=false
