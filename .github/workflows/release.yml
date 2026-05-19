@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: gltf-linux-preview
+
+jobs:
+  create_release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view -R "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload -R "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" \
+              ./install.sh \
+              --clobber
+          else
+            gh release create -R "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" \
+              --draft \
+              --generate-notes \
+              --title "${GITHUB_REF_NAME}" \
+              ./install.sh
+          fi
+
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: create_release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package release assets
+        run: |
+          archive_name="${APP_NAME}-linux-${{ matrix.arch }}.tar.gz"
+          release_dir="${RUNNER_TEMP}/release/${APP_NAME}"
+          archive_path="${RUNNER_TEMP}/${archive_name}"
+          mkdir -p "$release_dir"
+          install -Dm755 "target/${{ matrix.target }}/release/${APP_NAME}" "${release_dir}/${APP_NAME}"
+          cp -R assets "${release_dir}/"
+          cp LICENSE README.md "${release_dir}/"
+          tar -C "${RUNNER_TEMP}/release" -czf "$archive_path" "$APP_NAME"
+          checksum="$(sha256sum "$archive_path" | awk '{print $1}')"
+          printf '%s  %s\n' "$checksum" "$archive_name" > "${archive_path}.sha256"
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive_name="${APP_NAME}-linux-${{ matrix.arch }}.tar.gz"
+          gh release upload -R "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" \
+            "${RUNNER_TEMP}/${archive_name}" \
+            "${RUNNER_TEMP}/${archive_name}.sha256" \
+            --clobber
+
+  publish_release:
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit -R "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" --draft=false

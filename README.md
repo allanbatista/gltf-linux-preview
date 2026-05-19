@@ -14,6 +14,24 @@ cargo run -- models/fox.glb
 
 ## Install
 
+### From a release
+
+```bash
+curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash
+```
+
+To install into a different prefix:
+
+```bash
+curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash -s -- --prefix /usr/local
+```
+
+The installer selects `x86_64` or `aarch64` automatically.
+
+Releases are published automatically from `v*` tags by GitHub Actions.
+
+### From source
+
 ```bash
 ./build-and-install.sh
 ```
