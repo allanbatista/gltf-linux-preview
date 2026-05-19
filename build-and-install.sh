@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+APP_NAME="gltf-linux-preview"
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT_DIR"
+
+PREFIX="${PREFIX:-$HOME/.local}"
+APP_ROOT="$PREFIX/share/$APP_NAME"
+BIN_DIR="$PREFIX/bin"
+BIN_PATH="$APP_ROOT/$APP_NAME"
+LAUNCHER_PATH="$BIN_DIR/$APP_NAME"
+TARGET_BIN="$ROOT_DIR/target/release/$APP_NAME"
+
+cargo build --release
+
+if [ ! -f "$TARGET_BIN" ]; then
+    printf 'missing build output: %s\n' "$TARGET_BIN" >&2
+    exit 1
+fi
+
+if [ ! -d "$ROOT_DIR/assets" ]; then
+    printf 'missing assets dir: %s\n' "$ROOT_DIR/assets" >&2
+    exit 1
+fi
+
+mkdir -p "$APP_ROOT" "$BIN_DIR"
+install -m 755 "$TARGET_BIN" "$BIN_PATH"
+rm -rf "$APP_ROOT/assets"
+cp -R "$ROOT_DIR/assets" "$APP_ROOT/"
+
+cat > "$LAUNCHER_PATH" <<EOF
+#!/bin/sh
+set -eu
+APP_ROOT="\$(CDPATH= cd -- "\$(dirname -- "\$0")/../share/$APP_NAME" && pwd)"
+cd "\$APP_ROOT"
+exec "\$APP_ROOT/$APP_NAME" "\$@"
+EOF
+
+chmod 755 "$LAUNCHER_PATH"
+
+printf 'Installed %s in %s\n' "$APP_NAME" "$PREFIX"

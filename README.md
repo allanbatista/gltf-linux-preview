@@ -12,6 +12,18 @@ Previewador simples de modelos glTF em Bevy para Linux.
 cargo run -- models/fox.glb
 ```
 
+## Instalação
+
+```bash
+./build-and-install.sh
+```
+
+Por padrao, instala em `~/.local`. Para outro prefixo:
+
+```bash
+PREFIX=/usr/local ./build-and-install.sh
+```
+
 ## Controles
 
 - Botao esquerdo e arraste: rotaciona a camera
