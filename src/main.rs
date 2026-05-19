@@ -1,4 +1,5 @@
 use bevy::{
+    asset::{AssetPath, AssetPlugin, UnapprovedPathMode},
     camera::primitives::{Aabb, MeshAabb},
     gltf::GltfAssetLabel,
     input::{
@@ -8,15 +9,16 @@ use bevy::{
     math::Affine3A,
     prelude::*,
     scene::SceneRoot,
-    window::{Window, WindowPlugin, WindowResolution},
+    window::{PrimaryWindow, Window, WindowPlugin, WindowResolution},
 };
 use std::env;
+use std::path::PathBuf;
 
 const DEFAULT_MODEL_PATH: &str = "models/model.gltf";
 
 #[derive(Resource, Clone)]
 struct ViewerConfig {
-    model_path: String,
+    model_path: PathBuf,
 }
 
 #[derive(Component)]
@@ -26,6 +28,11 @@ struct ModelSpinner {
 
 #[derive(Component)]
 struct PendingCentering;
+
+#[derive(Resource, Default)]
+struct PendingCameraFit {
+    radius: Option<f32>,
+}
 
 #[derive(Component)]
 struct OrbitCamera {
@@ -40,26 +47,38 @@ struct OrbitCamera {
 }
 
 fn main() {
-    let model_path = env::args()
+    let model_path = env::args_os()
         .nth(1)
-        .unwrap_or_else(|| DEFAULT_MODEL_PATH.to_string());
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL_PATH));
 
     App::new()
         .insert_resource(ViewerConfig { model_path })
+        .insert_resource(PendingCameraFit::default())
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "GLTF Preview".into(),
-                resolution: WindowResolution::new(1280, 720),
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    unapproved_path_mode: UnapprovedPathMode::Deny,
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "GLTF Preview".into(),
+                        resolution: WindowResolution::new(1280, 720),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .add_systems(Startup, setup)
         .add_systems(Update, (spin_model, orbit_camera))
         .add_systems(
             PostUpdate,
-            center_pending_model.before(TransformSystems::Propagate),
+            (
+                center_pending_model.after(TransformSystems::Propagate),
+                apply_pending_camera_fit.after(center_pending_model),
+            ),
         )
         .run();
 }
@@ -89,18 +108,17 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<Vie
         },
     ));
 
-    let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(config.model_path.clone()));
+    let scene_path = AssetPath::from_path_buf(config.model_path.clone());
+    let scene = asset_server.load_override(GltfAssetLabel::Scene(0).from_asset(scene_path));
 
-    commands
-        .spawn((
-            Transform::default(),
-            ModelSpinner {
-                speed: std::f32::consts::TAU / 18.0,
-            },
-        ))
-        .with_children(|parent| {
-            parent.spawn((SceneRoot(scene), Transform::default(), PendingCentering));
-        });
+    commands.spawn((
+        SceneRoot(scene),
+        Transform::default(),
+        ModelSpinner {
+            speed: std::f32::consts::TAU / 18.0,
+        },
+        PendingCentering,
+    ));
 }
 
 fn spin_model(time: Res<Time>, mut query: Query<(&mut Transform, &ModelSpinner)>) {
@@ -129,12 +147,7 @@ fn orbit_camera(
                 .clamp(camera.min_radius, camera.max_radius);
         }
 
-        let x = camera.radius * camera.pitch.cos() * camera.yaw.sin();
-        let y = camera.radius * camera.pitch.sin();
-        let z = camera.radius * camera.pitch.cos() * camera.yaw.cos();
-
-        transform.translation = camera.target + Vec3::new(x, y, z);
-        transform.look_at(camera.target, Vec3::Y);
+        apply_orbit_transform(&camera, &mut transform);
     }
 }
 
@@ -148,12 +161,25 @@ fn normalized_scroll(scroll: &AccumulatedMouseScroll) -> f32 {
 fn center_pending_model(
     mut commands: Commands,
     children: Query<&Children>,
-    transforms: Query<&Transform>,
+    transforms: Query<&GlobalTransform>,
     mesh_query: Query<&Mesh3d>,
     meshes: Res<Assets<Mesh>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut pending_camera_fit: ResMut<PendingCameraFit>,
     mut query: Query<(Entity, &mut Transform), With<PendingCentering>>,
 ) {
     let mut corners = Vec::new();
+    let aspect_ratio = windows
+        .iter()
+        .next()
+        .map(|window| {
+            if window.height() > 0.0 {
+                window.width() / window.height()
+            } else {
+                16.0 / 9.0
+            }
+        })
+        .unwrap_or(16.0 / 9.0);
 
     for (entity, mut transform) in &mut query {
         corners.clear();
@@ -170,16 +196,53 @@ fn center_pending_model(
 
         if let Some(aabb) = Aabb::enclosing(corners.iter().copied()) {
             transform.translation = -Vec3::from(aabb.center);
+            pending_camera_fit.radius = Some(fit_camera_radius(&aabb, aspect_ratio));
+
             commands.entity(entity).remove::<PendingCentering>();
         }
     }
+}
+
+fn apply_pending_camera_fit(
+    mut pending_camera_fit: ResMut<PendingCameraFit>,
+    mut query: Query<(&mut OrbitCamera, &mut Transform), With<Camera3d>>,
+) {
+    let Some(radius) = pending_camera_fit.radius.take() else {
+        return;
+    };
+
+    if let Some((mut camera, mut transform)) = query.iter_mut().next() {
+        camera.target = Vec3::ZERO;
+        camera.radius = radius;
+        camera.min_radius = radius * 0.85;
+        camera.max_radius = radius * 20.0;
+        apply_orbit_transform(&camera, &mut transform);
+    }
+}
+
+fn fit_camera_radius(aabb: &Aabb, aspect_ratio: f32) -> f32 {
+    let sphere_radius = aabb.half_extents.length().max(0.5);
+    let vertical_half_fov = std::f32::consts::FRAC_PI_8;
+    let horizontal_half_fov = (vertical_half_fov.tan() * aspect_ratio.max(0.1)).atan();
+    let half_fov = vertical_half_fov.min(horizontal_half_fov);
+
+    sphere_radius / half_fov.sin() * 1.25
+}
+
+fn apply_orbit_transform(camera: &OrbitCamera, transform: &mut Transform) {
+    let x = camera.radius * camera.pitch.cos() * camera.yaw.sin();
+    let y = camera.radius * camera.pitch.sin();
+    let z = camera.radius * camera.pitch.cos() * camera.yaw.cos();
+
+    transform.translation = camera.target + Vec3::new(x, y, z);
+    transform.look_at(camera.target, Vec3::Y);
 }
 
 fn accumulate_mesh_corners(
     entity: Entity,
     affine_from_root: Affine3A,
     child_query: &Query<&Children>,
-    transforms: &Query<&Transform>,
+    transforms: &Query<&GlobalTransform>,
     mesh_query: &Query<&Mesh3d>,
     meshes: &Assets<Mesh>,
     corners: &mut Vec<Vec3>,
@@ -214,7 +277,7 @@ fn accumulate_mesh_corners(
 
         accumulate_mesh_corners(
             child,
-            affine_from_root * transform.compute_affine(),
+            affine_from_root * transform.affine(),
             child_query,
             transforms,
             mesh_query,

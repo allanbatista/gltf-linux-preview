@@ -1,4 +1,4 @@
-Coloque aqui um arquivo `.gltf` ou `.glb`.
+Place a `.gltf` or `.glb` file here.
 
-O app carrega `models/model.gltf` por padrao. Passe outro caminho como primeiro argumento
-se quiser abrir outro modelo.
+The app loads `models/model.gltf` by default. Pass another path as the first argument
+if you want to open a different model.
