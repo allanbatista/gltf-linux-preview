@@ -1,9 +1,11 @@
 use bevy::{
+    camera::primitives::{Aabb, MeshAabb},
     gltf::GltfAssetLabel,
     input::{
         mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButton, MouseScrollUnit},
         ButtonInput,
     },
+    math::Affine3A,
     prelude::*,
     scene::SceneRoot,
     window::{Window, WindowPlugin, WindowResolution},
@@ -21,6 +23,9 @@ struct ViewerConfig {
 struct ModelSpinner {
     speed: f32,
 }
+
+#[derive(Component)]
+struct PendingCentering;
 
 #[derive(Component)]
 struct OrbitCamera {
@@ -52,6 +57,10 @@ fn main() {
         }))
         .add_systems(Startup, setup)
         .add_systems(Update, (spin_model, orbit_camera))
+        .add_systems(
+            PostUpdate,
+            center_pending_model.before(TransformSystems::Propagate),
+        )
         .run();
 }
 
@@ -82,13 +91,16 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<Vie
 
     let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(config.model_path.clone()));
 
-    commands.spawn((
-        SceneRoot(scene),
-        Transform::default(),
-        ModelSpinner {
-            speed: std::f32::consts::TAU / 18.0,
-        },
-    ));
+    commands
+        .spawn((
+            Transform::default(),
+            ModelSpinner {
+                speed: std::f32::consts::TAU / 18.0,
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn((SceneRoot(scene), Transform::default(), PendingCentering));
+        });
 }
 
 fn spin_model(time: Res<Time>, mut query: Query<(&mut Transform, &ModelSpinner)>) {
@@ -130,5 +142,84 @@ fn normalized_scroll(scroll: &AccumulatedMouseScroll) -> f32 {
     match scroll.unit {
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
+    }
+}
+
+fn center_pending_model(
+    mut commands: Commands,
+    children: Query<&Children>,
+    transforms: Query<&Transform>,
+    mesh_query: Query<&Mesh3d>,
+    meshes: Res<Assets<Mesh>>,
+    mut query: Query<(Entity, &mut Transform), With<PendingCentering>>,
+) {
+    let mut corners = Vec::new();
+
+    for (entity, mut transform) in &mut query {
+        corners.clear();
+
+        accumulate_mesh_corners(
+            entity,
+            Affine3A::IDENTITY,
+            &children,
+            &transforms,
+            &mesh_query,
+            &meshes,
+            &mut corners,
+        );
+
+        if let Some(aabb) = Aabb::enclosing(corners.iter().copied()) {
+            transform.translation = -Vec3::from(aabb.center);
+            commands.entity(entity).remove::<PendingCentering>();
+        }
+    }
+}
+
+fn accumulate_mesh_corners(
+    entity: Entity,
+    affine_from_root: Affine3A,
+    child_query: &Query<&Children>,
+    transforms: &Query<&Transform>,
+    mesh_query: &Query<&Mesh3d>,
+    meshes: &Assets<Mesh>,
+    corners: &mut Vec<Vec3>,
+) {
+    if let Ok(mesh) = mesh_query.get(entity) {
+        if let Some(mesh) = meshes.get(&mesh.0) {
+            if let Some(aabb) = mesh.compute_aabb() {
+                let min: Vec3 = aabb.min().into();
+                let max: Vec3 = aabb.max().into();
+                corners.extend([
+                    affine_from_root.transform_point3(Vec3::new(min.x, min.y, min.z)),
+                    affine_from_root.transform_point3(Vec3::new(min.x, min.y, max.z)),
+                    affine_from_root.transform_point3(Vec3::new(min.x, max.y, min.z)),
+                    affine_from_root.transform_point3(Vec3::new(min.x, max.y, max.z)),
+                    affine_from_root.transform_point3(Vec3::new(max.x, min.y, min.z)),
+                    affine_from_root.transform_point3(Vec3::new(max.x, min.y, max.z)),
+                    affine_from_root.transform_point3(Vec3::new(max.x, max.y, min.z)),
+                    affine_from_root.transform_point3(Vec3::new(max.x, max.y, max.z)),
+                ]);
+            }
+        }
+    }
+
+    let Ok(entity_children) = child_query.get(entity) else {
+        return;
+    };
+
+    for child in entity_children.iter() {
+        let Ok(transform) = transforms.get(child) else {
+            continue;
+        };
+
+        accumulate_mesh_corners(
+            child,
+            affine_from_root * transform.compute_affine(),
+            child_query,
+            transforms,
+            mesh_query,
+            meshes,
+            corners,
+        );
     }
 }
