@@ -116,13 +116,13 @@ cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
 Name=GLTF Preview
-Comment=Preview glTF and GLB files
+Comment=Preview glTF, GLB, and OBJ files
 Exec="$LAUNCHER_PATH" %F
 TryExec=$LAUNCHER_PATH
 Icon=applications-graphics
 Terminal=false
 Categories=Graphics;3DGraphics;Viewer;
-MimeType=model/gltf+json;model/gltf-binary;
+MimeType=model/gltf+json;model/gltf-binary;model/obj;
 StartupNotify=false
 EOF
 

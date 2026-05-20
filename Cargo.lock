@@ -66,6 +66,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if",
+ "getrandom 0.3.4",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -912,6 +925,18 @@ name = "bevy_mikktspace"
 version = "0.17.0-dev"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef8e4b7e61dfe7719bb03c884dc270cd46a82efb40f93e9933b990c5c190c59"
+
+[[package]]
+name = "bevy_obj"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5219a9a91cc87e44aa52376e33d7feb52cdbd71d65c60d548eaddb8b78b1471d"
+dependencies = [
+ "bevy",
+ "serde",
+ "thiserror 2.0.18",
+ "wobj",
+]
 
 [[package]]
 name = "bevy_pbr"
@@ -2236,6 +2261,7 @@ name = "gltf-linux-preview"
 version = "0.1.1"
 dependencies = [
  "bevy",
+ "bevy_obj",
 ]
 
 [[package]]
@@ -4805,6 +4831,17 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "wobj"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0502c0794b9b6c0c6b1b868c67b2186149f8ca72d256b424180d750c1dc2bae8"
+dependencies = [
+ "ahash",
+ "indexmap",
+ "winnow 1.0.3",
 ]
 
 [[package]]

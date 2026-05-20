@@ -1,6 +1,6 @@
 # gltf-linux-preview
 
-Simple glTF and GLB previewer for Linux, built with Bevy.
+Simple glTF, GLB, and OBJ previewer for Linux, built with Bevy.
 
 ## Usage
 
@@ -10,6 +10,7 @@ Simple glTF and GLB previewer for Linux, built with Bevy.
 
 ```bash
 cargo run -- models/fox.glb
+cargo run -- models/fixtures/cube-obj/cube-tex.obj
 ```
 
 ## Install
@@ -36,7 +37,7 @@ Releases are published automatically from `v*` tags by GitHub Actions.
 ./build-and-install.sh
 ```
 
-By default, this installs to `~/.local` and registers the app so it appears in "Open With" for `.gltf` and `.glb` files.
+By default, this installs to `~/.local` and registers the app so it appears in "Open With" for `.gltf`, `.glb`, and `.obj` files.
 To use a different prefix:
 
 ```bash
@@ -47,6 +48,7 @@ After installation, you can also open a file directly:
 
 ```bash
 gltf-linux-preview /path/to/model.glb
+gltf-linux-preview /path/to/model.obj
 ```
 
 ## Controls

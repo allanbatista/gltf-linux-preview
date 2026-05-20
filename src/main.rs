@@ -10,6 +10,7 @@ use bevy::{
     scene::SceneRoot,
     window::{PrimaryWindow, Window, WindowPlugin, WindowResolution},
 };
+use bevy_obj::ObjPlugin;
 use std::env;
 use std::path::PathBuf;
 
@@ -71,6 +72,7 @@ fn main() {
                     ..default()
                 }),
         )
+        .add_plugins(ObjPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (spin_model, orbit_camera))
         .add_systems(
@@ -108,12 +110,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<Vie
         },
     ));
 
-    let scene_path = AssetPath::from_path_buf(config.model_path.clone());
-    let scene = asset_server.load_override(GltfAssetLabel::Scene(0).from_asset(scene_path));
+    let scene = load_model_scene(&asset_server, config.model_path.clone());
 
     commands.spawn((Transform::default(),)).with_children(move |parent| {
         parent.spawn((SceneRoot(scene), Transform::default(), PendingCentering));
     });
+}
+
+fn load_model_scene(asset_server: &AssetServer, model_path: PathBuf) -> Handle<Scene> {
+    let scene_path = AssetPath::from_path_buf(model_path.clone());
+    match model_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("obj") => asset_server.load_override(scene_path),
+        _ => asset_server.load_override(GltfAssetLabel::Scene(0).from_asset(scene_path)),
+    }
 }
 
 fn spin_model(time: Res<Time>, mut query: Query<(&mut Transform, &ModelSpinner)>) {
