@@ -10,8 +10,11 @@ Simple glTF, GLB, and OBJ previewer for Linux, built with Bevy.
 
 ```bash
 cargo run -- models/fox.glb
+cargo run -- models/fixtures/fox-glb/Fox.glb
 cargo run -- models/fixtures/cube-obj/cube-tex.obj
 ```
+
+For animation testing, prefer GLB fixtures. OBJ support in this app is for static geometry/materials; Blender's OBJ docs note that animation export is a numbered OBJ sequence, not a single animated OBJ asset: `https://docs.blender.org/manual/en/3.2/files/import_export/obj.html`
 
 ## Install
 

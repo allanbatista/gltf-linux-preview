@@ -12,7 +12,7 @@ use bevy::{
 };
 use bevy_obj::ObjPlugin;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_MODEL_PATH: &str = "models/model.gltf";
 const MODEL_SPIN_SPEED: f32 = std::f32::consts::TAU / 18.0;
@@ -22,10 +22,25 @@ struct ViewerConfig {
     model_path: PathBuf,
 }
 
+#[derive(Resource, Default)]
+struct AnimationPlayback {
+    has_animation: bool,
+    paused: bool,
+}
+
 #[derive(Component)]
 struct ModelSpinner {
     speed: f32,
 }
+
+#[derive(Component)]
+struct ControlledAnimationPlayer;
+
+#[derive(Component)]
+struct AnimationToggleButton;
+
+#[derive(Component)]
+struct AnimationToggleLabel;
 
 #[derive(Component)]
 struct PendingCentering;
@@ -52,14 +67,17 @@ fn main() {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL_PATH));
+    let asset_root = determine_asset_root();
 
     App::new()
         .insert_resource(ViewerConfig { model_path })
+        .insert_resource(AnimationPlayback::default())
         .insert_resource(PendingCameraFit::default())
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
+                    file_path: asset_root.display().to_string(),
                     unapproved_path_mode: UnapprovedPathMode::Deny,
                     ..default()
                 })
@@ -74,7 +92,16 @@ fn main() {
         )
         .add_plugins(ObjPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, (spin_model, orbit_camera))
+        .add_systems(
+            Update,
+            (
+                spin_model,
+                orbit_camera,
+                play_initial_animation,
+                toggle_animation_playback,
+                sync_animation_button,
+            ),
+        )
         .add_systems(
             PostUpdate,
             (
@@ -83,6 +110,29 @@ fn main() {
             ),
         )
         .run();
+}
+
+fn determine_asset_root() -> PathBuf {
+    let cwd_assets = env::current_dir()
+        .ok()
+        .map(|dir| dir.join("assets"))
+        .filter(|path| path.is_dir());
+    if let Some(path) = cwd_assets {
+        return path;
+    }
+
+    let exe_assets = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .map(|dir| dir.join("assets"))
+        .filter(|path| path.is_dir());
+    if let Some(path) = exe_assets {
+        return path;
+    }
+
+    env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("assets")
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<ViewerConfig>) {
@@ -115,6 +165,33 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, config: Res<Vie
     commands.spawn((Transform::default(),)).with_children(move |parent| {
         parent.spawn((SceneRoot(scene), Transform::default(), PendingCentering));
     });
+
+    commands
+        .spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(16),
+                bottom: px(16),
+                min_width: px(88),
+                height: px(40),
+                padding: UiRect::axes(px(16), px(8)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::all(px(6)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.12, 0.14, 0.17, 0.92)),
+            Visibility::Hidden,
+            AnimationToggleButton,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Pause"),
+                TextColor(Color::srgb(0.94, 0.95, 0.96)),
+                AnimationToggleLabel,
+            ));
+        });
 }
 
 fn load_model_scene(asset_server: &AssetServer, model_path: PathBuf) -> Handle<Scene> {
@@ -134,6 +211,103 @@ fn spin_model(time: Res<Time>, mut query: Query<(&mut Transform, &ModelSpinner)>
     for (mut transform, spinner) in &mut query {
         transform.rotate_y(spinner.speed * time.delta_secs());
     }
+}
+
+fn play_initial_animation(
+    mut commands: Commands,
+    config: Res<ViewerConfig>,
+    asset_server: Res<AssetServer>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
+    mut playback: ResMut<AnimationPlayback>,
+    mut query: Query<(Entity, &mut AnimationPlayer), Without<AnimationGraphHandle>>,
+) {
+    if query.is_empty() || is_obj_path(&config.model_path) {
+        return;
+    }
+
+    let animation_path = GltfAssetLabel::Animation(0)
+        .from_asset(AssetPath::from_path_buf(config.model_path.clone()));
+    let animation = asset_server.load_override(animation_path);
+    let (graph, animation_node) = AnimationGraph::from_clip(animation);
+    let graph = animation_graphs.add(graph);
+
+    for (entity, mut player) in &mut query {
+        commands
+            .entity(entity)
+            .insert((AnimationGraphHandle(graph.clone()), ControlledAnimationPlayer));
+
+        let active_animation = player.play(animation_node).repeat();
+        if playback.paused {
+            active_animation.pause();
+        }
+    }
+
+    playback.has_animation = true;
+}
+
+fn toggle_animation_playback(
+    mut playback: ResMut<AnimationPlayback>,
+    mut interactions: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<AnimationToggleButton>),
+    >,
+    mut players: Query<&mut AnimationPlayer, With<ControlledAnimationPlayer>>,
+) {
+    if !playback.has_animation {
+        return;
+    }
+
+    for (interaction, mut color) in &mut interactions {
+        match *interaction {
+            Interaction::Pressed => {
+                playback.paused = !playback.paused;
+                for mut player in &mut players {
+                    if playback.paused {
+                        player.pause_all();
+                    } else {
+                        player.resume_all();
+                    }
+                }
+                *color = BackgroundColor(Color::srgba(0.20, 0.23, 0.27, 0.96));
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(Color::srgba(0.18, 0.20, 0.24, 0.96));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(Color::srgba(0.12, 0.14, 0.17, 0.92));
+            }
+        }
+    }
+}
+
+fn sync_animation_button(
+    playback: Res<AnimationPlayback>,
+    mut buttons: Query<&mut Visibility, With<AnimationToggleButton>>,
+    mut labels: Query<&mut Text, With<AnimationToggleLabel>>,
+) {
+    if !playback.is_changed() {
+        return;
+    }
+
+    let visibility = if playback.has_animation {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+    for mut button_visibility in &mut buttons {
+        *button_visibility = visibility;
+    }
+
+    let label = if playback.paused { "Play" } else { "Pause" };
+    for mut text in &mut labels {
+        *text = Text::new(label);
+    }
+}
+
+fn is_obj_path(path: &PathBuf) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("obj"))
 }
 
 fn orbit_camera(
