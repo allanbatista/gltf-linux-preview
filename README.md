@@ -57,3 +57,21 @@ Para outro prefixo:
 Após a instalação:
 
     gltf-linux-preview /caminho/para/modelo.glb
+
+### Thumbnails no gerenciador de arquivos
+
+A instalação em `/usr` registra um thumbnailer XDG para GLB, glTF e OBJ. O gerador também pode ser chamado diretamente:
+
+    gltf-linux-preview --thumbnail modelo.glb thumbnail.png 256
+
+No GNOME/Nautilus, o thumbnailer roda em sandbox e só enxerga executáveis instalados em `/usr`. A instalação padrão em `~/.local` mantém a associação de arquivos e remove qualquer thumbnailer legado, pois ele não consegue gerar thumbnails automáticas. Para habilitá-las no GNOME, instale o app no sistema:
+
+    cargo build --release &&
+    sudo env PREFIX=/usr ./build-and-install.sh &&
+    nautilus -q
+
+Ao migrar de `~/.local` para `/usr`, o instalador tenta remover o thumbnailer local antigo via `SUDO_USER` e `getent`. Se não identificar o diretório do usuário, ele informa a remoção manual necessária.
+
+Para a release, use `sudo env PREFIX=/usr` ao executar `install.sh`. Se `~/.local/share/thumbnailers` for criado durante a sessão, execute `nautilus -q` antes de abrir a pasta novamente.
+
+O sandbox do GNOME fornece somente o arquivo selecionado: GLB funciona por ser autocontido; glTF e OBJ que dependem de `.bin`, `.mtl` ou texturas ao lado do arquivo não podem ser renderizados automaticamente nesse ambiente.

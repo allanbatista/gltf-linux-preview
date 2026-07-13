@@ -6,7 +6,7 @@ Carregar o ativo, enquadrar sua geometria, calcular estatísticas e reproduzir o
 
 ## Entidades
 
-- ModelAssets guarda o Handle<Gltf> quando aplicável.
+- ModelAssets guarda os handles de Gltf e WorldAsset quando aplicáveis.
 - ModelMesh preserva os handles originais de malha e material.
 - ModelStats contém polígonos/faces triangulados, vértices e VRAM estimada.
 - AnimationPlayback mantém clipe selecionado, pausa e loop.
@@ -14,6 +14,7 @@ Carregar o ativo, enquadrar sua geometria, calcular estatísticas e reproduzir o
 ## Relações
 
 - WorldAssetRoot instancia a cena do GLB/glTF/OBJ.
+- O modo headless aguarda todas as dependências de WorldAsset antes de capturar o PNG.
 - center_pending_model calcula AABB, estatísticas e enquadramento.
 - setup_animation_graph cria um grafo com todos os clipes do glTF.
 - draw_ui seleciona ou pausa a reprodução em AnimationPlayer.

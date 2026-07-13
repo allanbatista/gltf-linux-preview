@@ -1,6 +1,6 @@
 use bevy::{
     animation::RepeatAnimation,
-    asset::{AssetId, AssetPath, AssetPlugin, UnapprovedPathMode},
+    asset::{AssetId, AssetPath, AssetPlugin, RecursiveDependencyLoadState, UnapprovedPathMode},
     camera::{
         primitives::{Aabb, MeshAabb},
         RenderTarget,
@@ -13,10 +13,13 @@ use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor, WireframePlugin},
     prelude::*,
     render::{
-        render_resource::{PrimitiveTopology, TextureFormat, WgpuFeatures},
+        render_resource::{PollType, PrimitiveTopology, TextureFormat, WgpuFeatures},
         renderer::RenderDevice,
+        view::screenshot::{Screenshot, ScreenshotCaptured},
+        RenderPlugin,
     },
-    window::{PrimaryWindow, Window, WindowPlugin, WindowResolution},
+    window::{ExitCondition, PrimaryWindow, Window, WindowPlugin, WindowResolution},
+    winit::WinitPlugin,
 };
 use bevy_egui::{
     egui, input::EguiWantsInput, EguiContexts, EguiPlugin, EguiPrimaryContextPass,
@@ -26,21 +29,40 @@ use bevy_obj::ObjPlugin;
 use std::{
     collections::{HashMap, HashSet},
     env,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
+    process,
+    time::{Duration, Instant},
 };
 
 const DEFAULT_MODEL_PATH: &str = "models/model.gltf";
 const MODEL_SPIN_SPEED: f32 = std::f32::consts::TAU / 18.0;
 const THUMBNAIL_SIZE: u32 = 160;
+const MAX_THUMBNAIL_SIZE: u32 = 2048;
+const THUMBNAIL_TIMEOUT: Duration = Duration::from_secs(15);
+const EMPTY_THUMBNAIL_SCENE_ERROR: &str = "o modelo não contém malhas renderizáveis.";
 
 #[derive(Resource, Clone)]
 struct ViewerConfig {
     model_path: PathBuf,
 }
 
+#[derive(Resource, Clone)]
+struct ThumbnailConfig {
+    model_path: PathBuf,
+    output_path: PathBuf,
+    size: u32,
+}
+
+enum AppMode {
+    Viewer(ViewerConfig),
+    Thumbnail(ThumbnailConfig),
+}
+
 #[derive(Resource, Default)]
 struct ModelAssets {
     gltf: Option<Handle<Gltf>>,
+    scene: Option<Handle<WorldAsset>>,
 }
 
 #[derive(Resource, Default)]
@@ -96,6 +118,14 @@ struct ThumbnailState {
 struct ThumbnailTarget(Handle<Image>);
 
 #[derive(Resource, Default)]
+struct HeadlessThumbnailState {
+    frames_remaining: Option<u8>,
+    capture_queued: bool,
+    completed: bool,
+    failure: Option<String>,
+}
+
+#[derive(Resource, Default)]
 struct ViewMaterialCache {
     textured: HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>,
     untextured: Option<Handle<StandardMaterial>>,
@@ -148,6 +178,15 @@ struct MainCamera;
 #[derive(Component)]
 struct CameraLight;
 
+#[derive(Component)]
+struct ThumbnailCamera;
+
+#[derive(Component)]
+struct ThumbnailLight;
+
+#[derive(Component)]
+struct PendingThumbnailCentering;
+
 #[derive(Resource, Default)]
 struct PendingCameraFit {
     radius: Option<f32>,
@@ -166,14 +205,75 @@ struct OrbitCamera {
 }
 
 fn main() {
-    let model_path = env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL_PATH));
+    let mode = parse_app_mode(env::args_os().skip(1)).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        process::exit(2);
+    });
+
+    match mode {
+        AppMode::Viewer(config) => run_viewer(config),
+        AppMode::Thumbnail(config) => {
+            if let Err(error) = run_thumbnail(config) {
+                eprintln!("Falha ao gerar thumbnail: {error}");
+                process::exit(1);
+            }
+        }
+    }
+}
+
+fn parse_app_mode(mut args: impl Iterator<Item = OsString>) -> Result<AppMode, String> {
+    let Some(first) = args.next() else {
+        return Ok(AppMode::Viewer(ViewerConfig {
+            model_path: PathBuf::from(DEFAULT_MODEL_PATH),
+        }));
+    };
+
+    if first != OsStr::new("--thumbnail") {
+        return Ok(AppMode::Viewer(ViewerConfig {
+            model_path: PathBuf::from(first),
+        }));
+    }
+
+    let model_path = args
+        .next()
+        .ok_or_else(|| "Uso: --thumbnail ENTRADA SAIDA.png TAMANHO".to_string())?;
+    let output_path = args
+        .next()
+        .ok_or_else(|| "Uso: --thumbnail ENTRADA SAIDA.png TAMANHO".to_string())?;
+    let size = args
+        .next()
+        .ok_or_else(|| "Uso: --thumbnail ENTRADA SAIDA.png TAMANHO".to_string())?
+        .into_string()
+        .map_err(|_| "O tamanho da thumbnail deve ser texto UTF-8.".to_string())?
+        .parse::<u32>()
+        .map_err(|_| "O tamanho da thumbnail deve ser um número inteiro.".to_string())?;
+
+    if args.next().is_some() {
+        return Err("Uso: --thumbnail ENTRADA SAIDA.png TAMANHO".to_string());
+    }
+    if !(1..=MAX_THUMBNAIL_SIZE).contains(&size) {
+        return Err(format!(
+            "O tamanho da thumbnail deve estar entre 1 e {MAX_THUMBNAIL_SIZE}."
+        ));
+    }
+
+    let output_path = PathBuf::from(output_path);
+    if output_path.extension().and_then(OsStr::to_str) != Some("png") {
+        return Err("A saída da thumbnail deve ter extensão .png.".to_string());
+    }
+
+    Ok(AppMode::Thumbnail(ThumbnailConfig {
+        model_path: PathBuf::from(model_path),
+        output_path,
+        size,
+    }))
+}
+
+fn run_viewer(config: ViewerConfig) {
     let asset_root = determine_asset_root();
 
     App::new()
-        .insert_resource(ViewerConfig { model_path })
+        .insert_resource(config)
         .insert_resource(ModelAssets::default())
         .insert_resource(ModelStats::default())
         .insert_resource(AnimationPlayback::default())
@@ -224,6 +324,75 @@ fn main() {
             ),
         )
         .run();
+}
+
+fn run_thumbnail(config: ThumbnailConfig) -> Result<(), String> {
+    let output_path = config.output_path.clone();
+    let asset_root = determine_asset_root();
+    let mut app = App::new();
+    app.insert_resource(config)
+        .insert_resource(ModelAssets::default())
+        .insert_resource(HeadlessThumbnailState::default())
+        .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: asset_root.display().to_string(),
+                    unapproved_path_mode: UnapprovedPathMode::Deny,
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: None,
+                    exit_condition: ExitCondition::DontExit,
+                    ..default()
+                })
+                .set(RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                })
+                .disable::<WinitPlugin>(),
+        )
+        .add_plugins(ObjPlugin)
+        .add_systems(Startup, setup_thumbnail)
+        .add_systems(Update, queue_thumbnail_capture)
+        .add_systems(
+            PostUpdate,
+            center_thumbnail_model.after(TransformSystems::Propagate),
+        );
+    app.finish();
+    app.cleanup();
+
+    let deadline = Instant::now() + THUMBNAIL_TIMEOUT;
+    loop {
+        app.update();
+        app.world()
+            .resource::<RenderDevice>()
+            .wgpu_device()
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|error| format!("não foi possível ler a renderização: {error}"))?;
+
+        let state = app.world().resource::<HeadlessThumbnailState>();
+        if let Some(error) = state.failure.as_ref() {
+            return Err(error.clone());
+        }
+        if state.completed {
+            return output_path
+                .is_file()
+                .then_some(())
+                .ok_or_else(|| "o PNG não foi criado.".to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "o modelo não terminou de carregar em {} segundos.",
+                THUMBNAIL_TIMEOUT.as_secs()
+            ));
+        }
+
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 fn determine_asset_root() -> PathBuf {
@@ -292,7 +461,10 @@ fn setup(
     ));
 
     let (scene, gltf) = load_model_scene(&asset_server, &config.model_path);
-    commands.insert_resource(ModelAssets { gltf });
+    commands.insert_resource(ModelAssets {
+        gltf,
+        scene: Some(scene.clone()),
+    });
     commands
         .spawn((Transform::default(), Visibility::default()))
         .with_children(move |parent| {
@@ -302,6 +474,193 @@ fn setup(
                 PendingCentering,
             ));
         });
+}
+
+fn setup_thumbnail(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    config: Res<ThumbnailConfig>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let target = images.add(Image::new_target_texture(
+        config.size,
+        config.size,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    ));
+    commands.insert_resource(ThumbnailTarget(target.clone()));
+
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 15_000.0,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.5, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ThumbnailLight,
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        RenderTarget::Image(target.into()),
+        Transform::from_xyz(0.0, 1.5, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ThumbnailCamera,
+    ));
+
+    let (scene, gltf) = load_model_scene(&asset_server, &config.model_path);
+    commands.insert_resource(ModelAssets {
+        gltf,
+        scene: Some(scene.clone()),
+    });
+    commands
+        .spawn((Transform::default(), Visibility::default()))
+        .with_children(move |parent| {
+            parent.spawn((
+                WorldAssetRoot(scene),
+                Transform::default(),
+                PendingThumbnailCentering,
+            ));
+        });
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn center_thumbnail_model(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    model_assets: Res<ModelAssets>,
+    children: Query<&Children>,
+    transforms: Query<&GlobalTransform>,
+    mesh_query: Query<&Mesh3d>,
+    meshes: Res<Assets<Mesh>>,
+    mut cameras: Query<&mut Transform, (With<ThumbnailCamera>, Without<ThumbnailLight>)>,
+    mut lights: Query<&mut Transform, (With<ThumbnailLight>, Without<ThumbnailCamera>)>,
+    mut state: ResMut<HeadlessThumbnailState>,
+    mut query: Query<
+        (Entity, &mut Transform),
+        (
+            With<PendingThumbnailCentering>,
+            Without<ThumbnailCamera>,
+            Without<ThumbnailLight>,
+        ),
+    >,
+) {
+    if state.frames_remaining.is_some() || state.capture_queued {
+        return;
+    }
+    let Some(scene) = model_assets.scene.as_ref() else {
+        return;
+    };
+    match asset_server.get_recursive_dependency_load_state(scene) {
+        Some(RecursiveDependencyLoadState::Loaded) => {}
+        Some(RecursiveDependencyLoadState::Failed(error)) => {
+            state.failure = Some(format!("não foi possível carregar o modelo: {error}"));
+            return;
+        }
+        _ => return,
+    }
+
+    let mut corners = Vec::new();
+    for (entity, mut transform) in &mut query {
+        corners.clear();
+        accumulate_mesh_corners(
+            entity,
+            &children,
+            &transforms,
+            &mesh_query,
+            &meshes,
+            &mut corners,
+        );
+        let aabb = match thumbnail_bounds(&corners) {
+            Ok(aabb) => aabb,
+            Err(error) => {
+                state.failure = Some(error.to_string());
+                commands
+                    .entity(entity)
+                    .remove::<PendingThumbnailCentering>();
+                return;
+            }
+        };
+
+        transform.translation = -Vec3::from(aabb.center);
+        let mut camera_transform = Transform::default();
+        apply_orbit_transform(
+            &OrbitCamera {
+                target: Vec3::ZERO,
+                radius: fit_camera_radius(&aabb, 1.0),
+                yaw: 0.0,
+                pitch: 0.25,
+                orbit_sensitivity: 0.0,
+                zoom_sensitivity: 0.0,
+                min_radius: 0.0,
+                max_radius: 0.0,
+            },
+            &mut camera_transform,
+        );
+        for mut camera in &mut cameras {
+            *camera = camera_transform;
+        }
+        for mut light in &mut lights {
+            *light = camera_transform;
+        }
+
+        state.frames_remaining = Some(2);
+        commands
+            .entity(entity)
+            .remove::<PendingThumbnailCentering>();
+    }
+}
+
+fn thumbnail_bounds(corners: &[Vec3]) -> Result<Aabb, &'static str> {
+    Aabb::enclosing(corners.iter().copied()).ok_or(EMPTY_THUMBNAIL_SCENE_ERROR)
+}
+
+fn queue_thumbnail_capture(
+    mut commands: Commands,
+    target: Res<ThumbnailTarget>,
+    mut state: ResMut<HeadlessThumbnailState>,
+) {
+    let Some(frames_remaining) = state.frames_remaining else {
+        return;
+    };
+    if frames_remaining > 0 {
+        state.frames_remaining = Some(frames_remaining - 1);
+        return;
+    }
+    if state.capture_queued {
+        return;
+    }
+
+    state.capture_queued = true;
+    commands
+        .spawn(Screenshot::image(target.0.clone()))
+        .observe(save_headless_thumbnail);
+}
+
+fn save_headless_thumbnail(
+    screenshot: On<ScreenshotCaptured>,
+    config: Res<ThumbnailConfig>,
+    mut state: ResMut<HeadlessThumbnailState>,
+) {
+    match write_thumbnail_png(screenshot.image.clone(), &config.output_path) {
+        Ok(()) => state.completed = true,
+        Err(error) => state.failure = Some(error),
+    }
+}
+
+fn write_thumbnail_png(image: Image, output_path: &Path) -> Result<(), String> {
+    if output_path.extension().and_then(OsStr::to_str) != Some("png") {
+        return Err("a saída da thumbnail deve ter extensão .png.".to_string());
+    }
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("não foi possível criar a saída: {error}"))?;
+    }
+
+    image
+        .try_into_dynamic()
+        .map_err(|error| format!("não foi possível converter a imagem: {error}"))?
+        .to_rgb8()
+        .save(output_path)
+        .map_err(|error| format!("não foi possível gravar o PNG: {error}"))
 }
 
 fn load_model_scene(
@@ -1141,6 +1500,52 @@ mod tests {
         assert_eq!(playback.selected, 0);
         assert!(!ViewMode::Rendered.allows_wireframe());
         assert!(ViewMode::Textured.allows_wireframe());
+    }
+
+    #[test]
+    fn parses_thumbnail_arguments() {
+        let mode = parse_app_mode(
+            ["--thumbnail", "model.glb", "thumbnail.png", "256"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap();
+
+        let AppMode::Thumbnail(config) = mode else {
+            panic!("expected thumbnail mode");
+        };
+        assert_eq!(config.model_path, PathBuf::from("model.glb"));
+        assert_eq!(config.output_path, PathBuf::from("thumbnail.png"));
+        assert_eq!(config.size, 256);
+    }
+
+    #[test]
+    fn rejects_invalid_thumbnail_arguments() {
+        let invalid_size = parse_app_mode(
+            ["--thumbnail", "model.glb", "thumbnail.png", "0"]
+                .into_iter()
+                .map(OsString::from),
+        );
+        assert!(invalid_size.is_err());
+
+        let missing_output =
+            parse_app_mode(["--thumbnail", "model.glb"].into_iter().map(OsString::from));
+        assert!(missing_output.is_err());
+
+        let invalid_output = parse_app_mode(
+            ["--thumbnail", "model.glb", "thumbnail.jpg", "256"]
+                .into_iter()
+                .map(OsString::from),
+        );
+        assert!(invalid_output.is_err());
+    }
+
+    #[test]
+    fn rejects_thumbnail_without_renderable_meshes() {
+        assert_eq!(
+            thumbnail_bounds(&[]).unwrap_err(),
+            EMPTY_THUMBNAIL_SCENE_ERROR
+        );
     }
 
     #[test]

@@ -47,7 +47,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-for cmd in curl tar sha256sum cp rm mkdir install uname; do
+for cmd in curl tar sha256sum cp rm mkdir install uname chmod mktemp; do
     command -v "$cmd" >/dev/null 2>&1 || {
         printf 'missing required command: %s\n' "$cmd" >&2
         exit 1
@@ -88,8 +88,10 @@ SOURCE_DIR="${TMP_DIR}/${APP_NAME}"
 APP_ROOT="${PREFIX}/share/${APP_NAME}"
 BIN_DIR="${PREFIX}/bin"
 APPLICATIONS_DIR="${PREFIX}/share/applications"
+THUMBNAILERS_DIR="${PREFIX}/share/thumbnailers"
 LAUNCHER_PATH="${BIN_DIR}/${APP_NAME}"
 DESKTOP_FILE="${APPLICATIONS_DIR}/${APP_NAME}.desktop"
+THUMBNAILER_FILE="${THUMBNAILERS_DIR}/${APP_NAME}.thumbnailer"
 
 if [ ! -x "${SOURCE_DIR}/${APP_NAME}" ]; then
     printf 'missing installed binary: %s\n' "${SOURCE_DIR}/${APP_NAME}" >&2
@@ -97,7 +99,7 @@ if [ ! -x "${SOURCE_DIR}/${APP_NAME}" ]; then
 fi
 
 rm -rf "$APP_ROOT"
-install -d "$APP_ROOT" "$BIN_DIR" "$APPLICATIONS_DIR"
+install -d "$APP_ROOT" "$BIN_DIR" "$APPLICATIONS_DIR" "$THUMBNAILERS_DIR"
 cp -R "${SOURCE_DIR}/." "$APP_ROOT/"
 
 cat > "$LAUNCHER_PATH" <<EOF
@@ -125,6 +127,34 @@ Categories=Graphics;3DGraphics;Viewer;
 MimeType=model/gltf+json;model/gltf-binary;model/obj;
 StartupNotify=false
 EOF
+
+case "$PREFIX" in
+    /usr|/usr/*)
+        cat > "$THUMBNAILER_FILE" <<EOF
+[Thumbnailer Entry]
+TryExec=$LAUNCHER_PATH
+Exec=/usr/bin/env RUST_LOG=error "$LAUNCHER_PATH" --thumbnail %i %o %s
+MimeType=model/gltf+json;model/gltf-binary;model/obj;
+EOF
+        chmod 644 "$THUMBNAILER_FILE"
+
+        if [ "$(id -u)" -eq 0 ]; then
+            USER_HOME=
+            if [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
+                USER_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || :)
+            fi
+            if [ -n "$USER_HOME" ]; then
+                LEGACY_THUMBNAILER="$USER_HOME/.local/share/thumbnailers/$APP_NAME.thumbnailer"
+                rm -f "$LEGACY_THUMBNAILER"
+            else
+                printf 'warning: could not determine invoking user; remove ~/.local/share/thumbnailers/%s.thumbnailer manually if present\n' "$APP_NAME" >&2
+            fi
+        fi
+        ;;
+    *)
+        rm -f "$THUMBNAILER_FILE"
+        ;;
+esac
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
