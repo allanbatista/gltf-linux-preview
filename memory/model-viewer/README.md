@@ -8,7 +8,8 @@ O visualizador abre um único GLB, glTF ou OBJ, centraliza o conteúdo e oferece
 
 - [UI e renderização](UI_AND_RENDERING.md)
 - [Modelo, animação e estatísticas](MODEL_AND_ANIMATION.md)
+- [Geração de thumbnails](THUMBNAILING.md)
 
 ## Relações
 
-Arquivo do modelo alimenta src/main.rs, que instancia WorldAssetRoot. A cena alimenta estatísticas, animações e modos de renderização; os três fluxos são exibidos e controlados por egui.
+Arquivo do modelo alimenta src/main.rs, que instancia WorldAssetRoot. A cena alimenta estatísticas, animações e modos de renderização; esses fluxos são exibidos e controlados por egui. O mesmo carregamento também produz PNGs para thumbnailers XDG em modo headless.

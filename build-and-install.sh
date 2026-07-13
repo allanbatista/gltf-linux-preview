@@ -10,7 +10,9 @@ PREFIX="${PREFIX:-$HOME/.local}"
 APP_ROOT="$PREFIX/share/$APP_NAME"
 BIN_DIR="$PREFIX/bin"
 APPLICATIONS_DIR="$PREFIX/share/applications"
+THUMBNAILERS_DIR="$PREFIX/share/thumbnailers"
 DESKTOP_FILE="$APPLICATIONS_DIR/$APP_NAME.desktop"
+THUMBNAILER_FILE="$THUMBNAILERS_DIR/$APP_NAME.thumbnailer"
 BIN_PATH="$APP_ROOT/$APP_NAME"
 LAUNCHER_PATH="$BIN_DIR/$APP_NAME"
 TARGET_BIN="$ROOT_DIR/target/release/$APP_NAME"
@@ -27,7 +29,7 @@ if [ ! -d "$ROOT_DIR/assets" ]; then
     exit 1
 fi
 
-mkdir -p "$APP_ROOT" "$BIN_DIR" "$APPLICATIONS_DIR"
+mkdir -p "$APP_ROOT" "$BIN_DIR" "$APPLICATIONS_DIR" "$THUMBNAILERS_DIR"
 install -m 755 "$TARGET_BIN" "$BIN_PATH"
 rm -rf "$APP_ROOT/assets"
 cp -R "$ROOT_DIR/assets" "$APP_ROOT/"
@@ -57,6 +59,14 @@ Categories=Graphics;3DGraphics;Viewer;
 MimeType=model/gltf+json;model/gltf-binary;model/obj;
 StartupNotify=false
 EOF
+
+cat > "$THUMBNAILER_FILE" <<EOF
+[Thumbnailer Entry]
+TryExec=$LAUNCHER_PATH
+Exec=/usr/bin/env RUST_LOG=error "$LAUNCHER_PATH" --thumbnail %i %o %s
+MimeType=model/gltf+json;model/gltf-binary;model/obj;
+EOF
+chmod 644 "$THUMBNAILER_FILE"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true

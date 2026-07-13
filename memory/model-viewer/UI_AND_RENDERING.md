@@ -2,13 +2,13 @@
 
 ## Responsabilidade
 
-Exibir controles egui e aplicar o modo visual, a rotação automática, a iluminação e a thumbnail.
+Exibir controles egui e aplicar o modo visual, a rotação automática, a iluminação e a thumbnail interna.
 
 ## Entidades
 
 - ViewSettings mantém o modo base e a sobreposição de wireframe.
 - AutoRotation controla ModelSpinner.
-- ThumbnailTarget guarda a imagem estática gerada pela câmera temporária.
+- ThumbnailTarget guarda a imagem estática gerada pela câmera temporária para o painel egui.
 - MainCamera, OrbitCamera e CameraLight mantêm a luz alinhada à câmera.
 
 ## Relações
@@ -23,6 +23,8 @@ Exibir controles egui e aplicar o modo visual, a rotação automática, a ilumin
 2. Uma câmera secundária renderiza a thumbnail e é removida após a captura.
 3. egui desenha os painéis superiores e os modos na base.
 4. A alteração do modo é aplicada no próximo ciclo de atualização.
+
+A integração com thumbnailers XDG está documentada em [Geração de thumbnails](THUMBNAILING.md).
 
 ## Fontes no código
 
