@@ -1,4 +1,5 @@
 use bevy::{
+    animation::RepeatAnimation,
     asset::{AssetId, AssetPath, AssetPlugin, UnapprovedPathMode},
     camera::{
         primitives::{Aabb, MeshAabb},
@@ -45,7 +46,7 @@ struct ModelAssets {
 #[derive(Resource, Default)]
 struct ModelStats {
     polygons: usize,
-    faces: usize,
+    vertices: usize,
     vram_bytes: usize,
     available: bool,
 }
@@ -143,9 +144,6 @@ struct PendingCentering;
 
 #[derive(Component)]
 struct MainCamera;
-
-#[derive(Component)]
-struct ThumbnailCamera;
 
 #[derive(Component)]
 struct CameraLight;
@@ -407,11 +405,31 @@ fn start_selected_animation(player: &mut AnimationPlayer, playback: &AnimationPl
 
     player.stop_all();
     let animation = player.start(node);
-    if playback.looping {
-        animation.repeat();
-    }
+    animation.set_repeat(animation_repeat_mode(playback.looping, 0));
     if playback.paused {
         animation.pause();
+    }
+}
+
+fn update_selected_animation_loop(player: &mut AnimationPlayer, playback: &AnimationPlayback) {
+    let Some(&node) = playback.nodes.get(playback.selected) else {
+        return;
+    };
+    let Some(animation) = player.animation_mut(node) else {
+        return;
+    };
+
+    animation.set_repeat(animation_repeat_mode(
+        playback.looping,
+        animation.completions(),
+    ));
+}
+
+fn animation_repeat_mode(looping: bool, completions: u32) -> RepeatAnimation {
+    if looping {
+        RepeatAnimation::Forever
+    } else {
+        RepeatAnimation::Count(completions.saturating_add(1))
     }
 }
 
@@ -443,8 +461,8 @@ fn draw_ui(
                 ));
             }
             if stats.available {
-                ui.label(format!("Poligonos: {}", stats.polygons));
-                ui.label(format!("Faces: {}", stats.faces));
+                ui.label(format!("Poligonos/faces: {}", stats.polygons));
+                ui.label(format!("Vertices: {}", stats.vertices));
                 ui.label(format!("VRAM estimada: {}", format_bytes(stats.vram_bytes)));
             } else {
                 ui.label("Estatisticas carregando...");
@@ -501,6 +519,7 @@ fn draw_ui(
                 if ui
                     .add(egui::Button::selectable(index == playback.selected, name))
                     .clicked()
+                    && index != playback.selected
                 {
                     selected_animation = Some(index);
                 }
@@ -567,9 +586,13 @@ fn draw_ui(
     if toggle_loop {
         playback.looping = !playback.looping;
     }
-    if selected_animation.is_some() || toggle_loop {
+    if selected_animation.is_some() {
         for mut player in &mut players {
             start_selected_animation(&mut player, &playback);
+        }
+    } else if toggle_loop {
+        for mut player in &mut players {
+            update_selected_animation_loop(&mut player, &playback);
         }
     }
     if toggle_pause {
@@ -866,7 +889,7 @@ fn accumulate_model_stats(
                 .indices()
                 .map_or_else(|| mesh.count_vertices(), |indices| indices.len());
             stats.polygons += triangle_count(mesh.primitive_topology(), element_count);
-            stats.faces += triangle_count(mesh.primitive_topology(), element_count);
+            stats.vertices += mesh.count_vertices();
 
             if mesh_ids.insert(mesh_handle.id()) {
                 stats.vram_bytes += mesh.get_vertex_buffer_size();
@@ -993,7 +1016,6 @@ fn spawn_thumbnail_camera(
             },
             RenderTarget::Image(target.0.clone().into()),
             *transform,
-            ThumbnailCamera,
         ))
         .id();
     state.requested = false;
@@ -1001,10 +1023,7 @@ fn spawn_thumbnail_camera(
     state.frames_remaining = 2;
 }
 
-fn stop_thumbnail_camera(
-    mut state: ResMut<ThumbnailState>,
-    mut cameras: Query<&mut Camera, With<ThumbnailCamera>>,
-) {
+fn stop_thumbnail_camera(mut commands: Commands, mut state: ResMut<ThumbnailState>) {
     let Some(entity) = state.camera else {
         return;
     };
@@ -1014,9 +1033,7 @@ fn stop_thumbnail_camera(
     }
     state.camera = None;
     state.frames_remaining = 0;
-    if let Ok(mut camera) = cameras.get_mut(entity) {
-        camera.is_active = false;
-    }
+    commands.entity(entity).despawn();
 }
 
 fn format_bytes(bytes: usize) -> String {
@@ -1124,5 +1141,53 @@ mod tests {
         assert_eq!(playback.selected, 0);
         assert!(!ViewMode::Rendered.allows_wireframe());
         assert!(ViewMode::Textured.allows_wireframe());
+    }
+
+    #[test]
+    fn changing_loop_keeps_animation_progress() {
+        let node = AnimationGraph::new().root;
+        let mut playback = AnimationPlayback {
+            nodes: vec![node],
+            ..default()
+        };
+        let mut player = AnimationPlayer::default();
+        player.start(node).repeat().set_seek_time(0.75).pause();
+
+        playback.looping = false;
+        update_selected_animation_loop(&mut player, &playback);
+        let animation = player.animation(node).unwrap();
+        assert_eq!(animation.repeat_mode(), RepeatAnimation::Count(1));
+        assert_eq!(animation.seek_time(), 0.75);
+        assert!(animation.is_paused());
+
+        playback.looping = true;
+        update_selected_animation_loop(&mut player, &playback);
+        assert_eq!(
+            player.animation(node).unwrap().repeat_mode(),
+            RepeatAnimation::Forever
+        );
+        assert_eq!(animation_repeat_mode(false, 3), RepeatAnimation::Count(4));
+    }
+
+    #[test]
+    fn removes_thumbnail_camera_after_capture() {
+        let mut app = App::new();
+        let camera = app.world_mut().spawn_empty().id();
+        app.insert_resource(ThumbnailState {
+            camera: Some(camera),
+            frames_remaining: 2,
+            ..default()
+        });
+        app.add_systems(Update, stop_thumbnail_camera);
+
+        app.update();
+        assert!(app.world().get_entity(camera).is_ok());
+        assert_eq!(app.world().resource::<ThumbnailState>().frames_remaining, 1);
+
+        app.update();
+        assert!(app.world().get_entity(camera).is_err());
+        let state = app.world().resource::<ThumbnailState>();
+        assert!(state.camera.is_none());
+        assert_eq!(state.frames_remaining, 0);
     }
 }

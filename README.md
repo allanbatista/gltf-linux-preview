@@ -19,7 +19,7 @@ Use GLB para testar animações. OBJ é aceito para geometria e materiais estát
 
 ## Interface
 
-- **Modelo:** thumbnail estática, polígonos (triângulos), faces e VRAM estimada.
+- **Modelo:** thumbnail estática, polígonos/faces triangulados, vértices e VRAM estimada.
 - **Rotação:** inicia ligada e pode ser ativada ou desativada no painel do modelo.
 - **Animações:** seleciona qualquer clipe, inicia pelo primeiro em loop e permite pausar ou desativar o loop.
 - **Visualização:** os botões centralizados na base alternam entre Renderizado, Texturizado, Suave e Sólido. Wireframe é uma sobreposição para Texturizado, Suave e Sólido quando a GPU o suporta.
