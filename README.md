@@ -1,61 +1,59 @@
 # gltf-linux-preview
 
-Simple glTF, GLB, and OBJ previewer for Linux, built with Bevy.
+Visualizador Linux para arquivos glTF, GLB e OBJ, feito com Bevy 0.19 e egui.
 
-## Usage
+## Uso
 
-1. Place your model in `assets/models/model.gltf`.
-2. Run `cargo run`.
-3. Or pass another path relative to `assets/`:
+1. Coloque o modelo em assets/models/model.gltf.
+2. Execute:
 
-```bash
-cargo run -- models/fox.glb
-cargo run -- models/fixtures/fox-glb/Fox.glb
-cargo run -- models/fixtures/cube-obj/cube-tex.obj
-```
+    cargo run
 
-For animation testing, prefer GLB fixtures. OBJ support in this app is for static geometry/materials; Blender's OBJ docs note that animation export is a numbered OBJ sequence, not a single animated OBJ asset: `https://docs.blender.org/manual/en/3.2/files/import_export/obj.html`
+Também é possível informar um caminho relativo a assets:
 
-## Install
+    cargo run -- models/fixtures/fox-glb/Fox.glb
+    cargo run -- models/fixtures/box-textured/BoxTextured.gltf
+    cargo run -- models/fixtures/cube-obj/cube-tex.obj
 
-### From a release
+Use GLB para testar animações. OBJ é aceito para geometria e materiais estáticos, mas não contém animações.
 
-```bash
-curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash
-```
+## Interface
 
-To install into a different prefix:
+- **Modelo:** thumbnail estática, polígonos/faces triangulados, vértices e VRAM estimada.
+- **Rotação:** inicia ligada e pode ser ativada ou desativada no painel do modelo.
+- **Animações:** seleciona qualquer clipe, inicia pelo primeiro em loop e permite pausar ou desativar o loop.
+- **Visualização:** os botões centralizados na base alternam entre Renderizado, Texturizado, Suave e Sólido. Wireframe é uma sobreposição para Texturizado, Suave e Sólido quando a GPU o suporta.
 
-```bash
-curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash -s -- --prefix /usr/local
-```
+A VRAM é uma estimativa dos buffers de vértices/índices e das texturas únicas do modelo. Não inclui a thumbnail nem caches transitórios da visualização.
 
-The installer selects `x86_64` or `aarch64` automatically.
+## Controles da cena
 
-Releases are published automatically from `v*` tags by GitHub Actions.
+- Arraste com o botão esquerdo: orbita a câmera.
+- Roda do mouse: aproxima ou afasta.
+- A luz direcional acompanha a câmera e aponta para o centro do modelo.
 
-### From source
+## Instalação
 
-```bash
-./build-and-install.sh
-```
+### Release
 
-By default, this installs to `~/.local` and registers the app so it appears in "Open With" for `.gltf`, `.glb`, and `.obj` files.
-To use a different prefix:
+    curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash
 
-```bash
-PREFIX=/usr/local ./build-and-install.sh
-```
+Para outro prefixo:
 
-After installation, you can also open a file directly:
+    curl -fsSL https://github.com/allanbatista/gltf-linux-preview/releases/latest/download/install.sh | bash -s -- --prefix /usr/local
 
-```bash
-gltf-linux-preview /path/to/model.glb
-gltf-linux-preview /path/to/model.obj
-```
+O instalador seleciona automaticamente x86_64 ou aarch64. Releases são publicadas a partir de tags v*.
 
-## Controls
+### Código-fonte
 
-- Left mouse button drag: rotate the camera
-- Scroll: zoom in and out
-- The model spins continuously around the Y axis
+    ./build-and-install.sh
+
+Por padrão, o instalador usa ~/.local e registra o app para .gltf, .glb e .obj.
+
+Para outro prefixo:
+
+    PREFIX=/usr/local ./build-and-install.sh
+
+Após a instalação:
+
+    gltf-linux-preview /caminho/para/modelo.glb
