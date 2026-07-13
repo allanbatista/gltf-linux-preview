@@ -138,11 +138,16 @@ MimeType=model/gltf+json;model/gltf-binary;model/obj;
 EOF
         chmod 644 "$THUMBNAILER_FILE"
 
-        if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
-            USER_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-            LEGACY_THUMBNAILER="$USER_HOME/.local/share/thumbnailers/$APP_NAME.thumbnailer"
-            if [ -n "$USER_HOME" ] && [ -f "$LEGACY_THUMBNAILER" ]; then
+        if [ "$(id -u)" -eq 0 ]; then
+            USER_HOME=
+            if [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
+                USER_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || :)
+            fi
+            if [ -n "$USER_HOME" ]; then
+                LEGACY_THUMBNAILER="$USER_HOME/.local/share/thumbnailers/$APP_NAME.thumbnailer"
                 rm -f "$LEGACY_THUMBNAILER"
+            else
+                printf 'warning: could not determine invoking user; remove ~/.local/share/thumbnailers/%s.thumbnailer manually if present\n' "$APP_NAME" >&2
             fi
         fi
         ;;

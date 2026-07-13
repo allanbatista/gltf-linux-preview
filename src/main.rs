@@ -40,6 +40,7 @@ const MODEL_SPIN_SPEED: f32 = std::f32::consts::TAU / 18.0;
 const THUMBNAIL_SIZE: u32 = 160;
 const MAX_THUMBNAIL_SIZE: u32 = 2048;
 const THUMBNAIL_TIMEOUT: Duration = Duration::from_secs(15);
+const EMPTY_THUMBNAIL_SCENE_ERROR: &str = "o modelo não contém malhas renderizáveis.";
 
 #[derive(Resource, Clone)]
 struct ViewerConfig {
@@ -384,7 +385,10 @@ fn run_thumbnail(config: ThumbnailConfig) -> Result<(), String> {
                 .ok_or_else(|| "o PNG não foi criado.".to_string());
         }
         if Instant::now() >= deadline {
-            return Err("o modelo não terminou de carregar em 15 segundos.".to_string());
+            return Err(format!(
+                "o modelo não terminou de carregar em {} segundos.",
+                THUMBNAIL_TIMEOUT.as_secs()
+            ));
         }
 
         std::thread::sleep(Duration::from_millis(16));
@@ -565,8 +569,15 @@ fn center_thumbnail_model(
             &meshes,
             &mut corners,
         );
-        let Some(aabb) = Aabb::enclosing(corners.iter().copied()) else {
-            continue;
+        let aabb = match thumbnail_bounds(&corners) {
+            Ok(aabb) => aabb,
+            Err(error) => {
+                state.failure = Some(error.to_string());
+                commands
+                    .entity(entity)
+                    .remove::<PendingThumbnailCentering>();
+                return;
+            }
         };
 
         transform.translation = -Vec3::from(aabb.center);
@@ -596,6 +607,10 @@ fn center_thumbnail_model(
             .entity(entity)
             .remove::<PendingThumbnailCentering>();
     }
+}
+
+fn thumbnail_bounds(corners: &[Vec3]) -> Result<Aabb, &'static str> {
+    Aabb::enclosing(corners.iter().copied()).ok_or(EMPTY_THUMBNAIL_SCENE_ERROR)
 }
 
 fn queue_thumbnail_capture(
@@ -1523,6 +1538,14 @@ mod tests {
                 .map(OsString::from),
         );
         assert!(invalid_output.is_err());
+    }
+
+    #[test]
+    fn rejects_thumbnail_without_renderable_meshes() {
+        assert_eq!(
+            thumbnail_bounds(&[]).unwrap_err(),
+            EMPTY_THUMBNAIL_SCENE_ERROR
+        );
     }
 
     #[test]

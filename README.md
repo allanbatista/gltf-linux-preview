@@ -70,7 +70,7 @@ No GNOME/Nautilus, o thumbnailer roda em sandbox e só enxerga executáveis inst
     sudo env PREFIX=/usr ./build-and-install.sh &&
     nautilus -q
 
-Ao migrar de `~/.local` para `/usr`, o instalador remove o thumbnailer local antigo para que o Nautilus use o binário visível no sandbox.
+Ao migrar de `~/.local` para `/usr`, o instalador tenta remover o thumbnailer local antigo via `SUDO_USER` e `getent`. Se não identificar o diretório do usuário, ele informa a remoção manual necessária.
 
 Para a release, use `sudo env PREFIX=/usr` ao executar `install.sh`. Se `~/.local/share/thumbnailers` for criado durante a sessão, execute `nautilus -q` antes de abrir a pasta novamente.
 
