@@ -17,10 +17,15 @@ BIN_PATH="$APP_ROOT/$APP_NAME"
 LAUNCHER_PATH="$BIN_DIR/$APP_NAME"
 TARGET_BIN="$ROOT_DIR/target/release/$APP_NAME"
 
-cargo build --release
+if [ "$(id -u)" -ne 0 ]; then
+    cargo build --release
+fi
 
-if [ ! -f "$TARGET_BIN" ]; then
+if [ ! -x "$TARGET_BIN" ]; then
     printf 'missing build output: %s\n' "$TARGET_BIN" >&2
+    if [ "$(id -u)" -eq 0 ]; then
+        printf 'run cargo build --release without sudo first\n' >&2
+    fi
     exit 1
 fi
 

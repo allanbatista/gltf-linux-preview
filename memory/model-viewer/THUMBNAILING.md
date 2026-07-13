@@ -14,6 +14,7 @@ Produzir PNGs de preview para thumbnailers XDG sem criar uma janela nem depender
 ## Relações
 
 - `install.sh` e `build-and-install.sh` registram `gltf-linux-preview.thumbnailer` para GLB, glTF e OBJ.
+- `build-and-install.sh` reutiliza `target/release/gltf-linux-preview` se `cargo` não estiver no PATH, permitindo instalar em `/usr` após o build do usuário.
 - O thumbnailer chama o binário com `%i`, `%o` e `%s`.
 - `run_thumbnail` desabilita Winit, renderiza para ThumbnailTarget e grava Screenshot como PNG.
 - `ModelAssets.scene` impede a captura antes de todas as dependências carregarem.

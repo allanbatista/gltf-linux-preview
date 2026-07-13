@@ -66,7 +66,9 @@ O instalador registra um thumbnailer XDG para GLB, glTF e OBJ. O gerador também
 
 No GNOME/Nautilus, o thumbnailer roda em sandbox e só enxerga executáveis instalados em `/usr`. A instalação padrão em `~/.local` mantém a associação de arquivos, mas não consegue gerar thumbnails automáticas. Para habilitá-las no GNOME, instale o app no sistema:
 
-    sudo env PREFIX=/usr ./build-and-install.sh
+    cargo build --release &&
+    sudo env PREFIX=/usr ./build-and-install.sh &&
+    nautilus -q
 
 Para a release, use `sudo env PREFIX=/usr` ao executar `install.sh`. Se `~/.local/share/thumbnailers` for criado durante a sessão, execute `nautilus -q` antes de abrir a pasta novamente.
 
