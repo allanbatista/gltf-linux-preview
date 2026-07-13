@@ -65,13 +65,28 @@ MimeType=model/gltf+json;model/gltf-binary;model/obj;
 StartupNotify=false
 EOF
 
-cat > "$THUMBNAILER_FILE" <<EOF
+case "$PREFIX" in
+    /usr|/usr/*)
+        cat > "$THUMBNAILER_FILE" <<EOF
 [Thumbnailer Entry]
 TryExec=$LAUNCHER_PATH
 Exec=/usr/bin/env RUST_LOG=error "$LAUNCHER_PATH" --thumbnail %i %o %s
 MimeType=model/gltf+json;model/gltf-binary;model/obj;
 EOF
-chmod 644 "$THUMBNAILER_FILE"
+        chmod 644 "$THUMBNAILER_FILE"
+
+        if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
+            USER_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+            LEGACY_THUMBNAILER="$USER_HOME/.local/share/thumbnailers/$APP_NAME.thumbnailer"
+            if [ -n "$USER_HOME" ] && [ -f "$LEGACY_THUMBNAILER" ]; then
+                rm -f "$LEGACY_THUMBNAILER"
+            fi
+        fi
+        ;;
+    *)
+        rm -f "$THUMBNAILER_FILE"
+        ;;
+esac
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
